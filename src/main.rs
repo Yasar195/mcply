@@ -1,9 +1,10 @@
 mod generators;
 mod protocoal;
+mod dyns;
 
 use std::collections::HashMap;
 
-use generators::server::{ ServerGenerator, ServerGeneratorConfig, Tool };
+use generators::server::{ ServerGenerator, ServerGeneratorConfig };
 
 fn main() {
     let mut config: ServerGeneratorConfig = ServerGeneratorConfig {
@@ -29,16 +30,4 @@ fn main() {
     let mut test_params = HashMap::new();
     
     test_params.insert("page".to_string(), "5".to_string());
-
-    let test_tool = Tool {
-        tool_name: "get_test_url".to_string(),
-        tool_url: "https://test.org/get/items".to_string(),
-        tool_url_params: Some(vec![test_params]),
-        tool_url_query: None
-    };
-
-    yahoo_server.add_tools(test_tool);
-
-    yahoo_server.display();
-    gmail_server.display();
 }
