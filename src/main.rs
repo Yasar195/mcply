@@ -4,30 +4,47 @@ mod dyns;
 
 use std::collections::HashMap;
 
+use dyns::dynamictool::{ DynamicToolDef, ActionType };
 use generators::server::{ ServerGenerator, ServerGeneratorConfig };
+use protocoal::http::{ HttpProtocoal, HttpMethod };
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let mut config: ServerGeneratorConfig = ServerGeneratorConfig {
         name: "Gmail server".to_string(),
         version: "1.0".to_string()
     };
 
-    let gmail_server: ServerGenerator = ServerGenerator::new(&config);
+    let mut gmail_server: ServerGenerator = ServerGenerator::new(&config);
     println!("Server Name: {}, Version: {}", gmail_server.get_name(), gmail_server.get_version());
 
-    config.name = "Yahoo server".to_string();
-    config.version = "2.0".to_string();
+    let tool = DynamicToolDef {
+        name: "Send Email".to_string(),
+        description: "Sends an email to a specified recipient.".to_string(),
+        parameters: None,
+        action: ActionType::http,
+        tool: HttpProtocoal {
+            method: HttpMethod::GET,
+            url: "https://dummyjson.com/carts/{id}".to_string(),
+            body: None,
+            path_params: Some(HashMap::from([
+                ("id".to_string(), "4".to_string())  // replaces {id} with 1
+            ])),
+            query_params: None,
+            request_headers: Some(HashMap::from([
+                ("Accept".to_string(), "application/json".to_string()),
+                ("Content-Type".to_string(), "application/json".to_string()),
+            ]))        
+        }
+    };
 
-    let mut yahoo_server: ServerGenerator = ServerGenerator::new(&config);  
-    println!("Server Name: {}, Version: {}", yahoo_server.get_name(), yahoo_server.get_version());
+    gmail_server.add_tools(tool);
 
-    config.name = "Outlook server".to_string();
-    config.version = "3.0".to_string();
-
-    let outlook_server: ServerGenerator = ServerGenerator::new(&config);
-    println!("Server Name: {}, Version: {}", outlook_server.get_name(), outlook_server.get_version());
-
-    let mut test_params = HashMap::new();
+    let result = gmail_server.call_tool("Send Email").await;
+    if let Some(tool_result) = result {
+        if let Some(structured) = tool_result.structured_content {
+            println!("{}", serde_json::to_string_pretty(&structured).unwrap());
+        }
+    }
     
-    test_params.insert("page".to_string(), "5".to_string());
 }

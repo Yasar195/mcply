@@ -1,7 +1,9 @@
 use serde_json::Value;
 use std::collections::HashMap;
 use reqwest::Client;
-enum HttpMethod {
+
+#[derive(Debug, Clone)]
+pub enum HttpMethod {
     GET,
     POST,
     PUT,
@@ -9,6 +11,7 @@ enum HttpMethod {
     DELETE,
 }
 
+#[derive(Debug, Clone)]
 pub struct HttpProtocoal {
     pub method: HttpMethod,
     pub query_params: Option<HashMap<String, String>>,

@@ -1,5 +1,6 @@
 use crate::protocoal::http::HttpProtocoal;
 
+#[derive(Debug, Clone)]
 pub struct DynamicToolDef {
     pub name: String,
     pub description: String,
@@ -8,6 +9,7 @@ pub struct DynamicToolDef {
     pub tool: HttpProtocoal,
 }
 
+#[derive(Debug, Clone)]
 pub struct ToolParam {
     pub name: String,
     pub description: String,
@@ -15,6 +17,7 @@ pub struct ToolParam {
     pub param_type: String
 }
 
-enum ActionType {
+#[derive(Debug, Clone)]
+pub enum ActionType {
     http
 }

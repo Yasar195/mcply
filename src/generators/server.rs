@@ -1,7 +1,7 @@
 use std::{collections::HashMap, iter::Map};
 use std::sync::{ Arc, RwLock };
-use rmcp::transport::DynamicTransportError;
-use crate::dyns::dynamictool::DynamicToolDef;
+use rmcp::model::{ Tool, Content, CallToolResult };
+use crate::dyns::dynamictool::{ DynamicToolDef, ActionType };
 
 pub struct ServerGenerator {
     name: String,
@@ -26,10 +26,6 @@ pub struct ServerGeneratorConfig {
 
 pub struct Resource {
 
-}
-
-pub trait DinamicToolRegistry {
-    fn register_tool(&self, def: DynamicTransportError);
 }
 
 impl ServerGenerator {
@@ -59,6 +55,37 @@ impl ServerGenerator {
     
     pub fn get_name(&self) -> &str {
         &self.name
+    }
+
+    pub async fn call_tool(&self, name: &str) -> Option<CallToolResult> {
+        let def = self.tools.as_ref()?.read().unwrap().get(name).cloned()?;
+        Some(Self::execute_tool(&def).await)
+
+    }
+
+    async fn execute_tool(def: &DynamicToolDef) -> CallToolResult {
+        match def.action {
+            ActionType::http => {
+                let result = def.tool.request().await;
+                match result {
+                    Ok(content) => {
+                        let json_content = Content::json(content.clone()).unwrap_or_else(|_| Content::text("serialization error"));
+                        CallToolResult {
+                            is_error: Some(false),
+                            structured_content: Some(content),
+                            content: vec![json_content],
+                            meta: None
+                        }
+                    },
+                    Err(e) => CallToolResult {
+                        is_error: Some(true),
+                        structured_content: None,
+                        content: vec![],
+                        meta: None
+                    }
+                }
+            }
+        }
     }
 
     // pub fn display(&self) {
