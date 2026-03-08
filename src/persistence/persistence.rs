@@ -25,6 +25,15 @@ impl Persistence {
                 )",
                 [],
             ).expect("Failed to create tasks table");
+            
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS models (
+                    id INTEGER PRIMARY KEY,
+                    model_type TEXT NOT NULL,
+                    api_key TEXT
+                )",
+                [],
+            ).expect("Failed to create models table");
         }
     }
 
@@ -149,6 +158,76 @@ impl Persistable for Task {
             title: row.get(1)?,
             description: row.get(2)?,
             completed: row.get(3)?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ModelType {
+    Ollama,
+    Groq,
+}
+
+impl ModelType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            ModelType::Ollama => "Ollama",
+            ModelType::Groq => "Groq",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "Ollama" => Some(ModelType::Ollama),
+            "Groq" => Some(ModelType::Groq),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Model {
+    pub id: Option<i64>,
+    pub model_type: String,
+    pub api_key: Option<String>,
+}
+
+impl Model {
+    pub fn get_model_type(&self) -> ModelType {
+        ModelType::from_str(&self.model_type).unwrap_or(ModelType::Ollama)
+    }
+}
+
+impl Persistable for Model {
+    fn insert_sql(&self) -> String {
+        "INSERT INTO models (model_type, api_key) VALUES (?1, ?2)".to_string()
+    }
+
+    fn params(&self) -> Vec<&dyn rusqlite::ToSql> {
+        vec![&self.model_type, &self.api_key]
+    }
+
+    fn update_sql() -> String {
+        "UPDATE models SET model_type = ?1, api_key = ?2 WHERE id = ?3".to_string()
+    }
+
+    fn update_params(&self) -> Vec<&dyn rusqlite::ToSql> {
+        vec![&self.model_type, &self.api_key, &self.id]
+    }
+
+    fn get_all_sql() -> String {
+        "SELECT id, model_type, api_key FROM models ORDER BY id DESC".to_string()
+    }
+
+    fn delete_sql() -> String {
+        "DELETE FROM models WHERE id = ?1".to_string()
+    }
+
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Model {
+            id: row.get(0)?,
+            model_type: row.get(1)?,
+            api_key: row.get(2)?,
         })
     }
 }

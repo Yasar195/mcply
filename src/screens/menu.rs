@@ -1,5 +1,6 @@
 // use crate::screens::settings::SettingsScreen;
 // use crate::screens::tasks::TasksScreen;
+use crate::screens::models::ModelsScreen;
 use crate::ui::navigation::NavigatableList;
 use crate::ui::screen::{Screen, ScreenAction};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -46,6 +47,7 @@ impl Screen for MenuScreen {
             KeyCode::Enter => {
                 let selected = self.list.state.selected().unwrap_or(0);
                 match self.list.options[selected].as_str() {
+                    "Models" => Some(ScreenAction::Switch(Box::new(ModelsScreen::new()))),
                     // "View Tasks" => Some(ScreenAction::Switch(Box::new(TasksScreen::new()))),
                     // "Settings" => Some(ScreenAction::Switch(Box::new(SettingsScreen::new()))),
                     "Exit" => Some(ScreenAction::Exit),
