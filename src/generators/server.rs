@@ -1,6 +1,6 @@
 use std::{collections::HashMap, iter::Map};
 use std::sync::{ Arc, RwLock };
-use rmcp::model::{ Tool, Content, CallToolResult };
+use rmcp::model::{ CallToolRequestParams, CallToolResult, Content, PaginatedRequestParams, Tool };
 use rmcp::service::{ RunningService, ServerInitializeError };
 use rmcp::RoleServer;
 use crate::dyns::dynamictool::{ DynamicToolDef, ActionType };
@@ -53,7 +53,7 @@ impl ServerGenerator {
         ServerGenerator {
             name: data.name.clone(),
             version: data.version.clone(),
-            tools: None,
+            tools: Some(Arc::new(RwLock::new(HashMap::new()))),
             prompts: None,
             resources: None
         }
@@ -71,21 +71,51 @@ impl ServerGenerator {
             }
         }
     }
+
+    pub fn get_tools_description(&self) -> String {
+        match &self.tools {
+            Some(t) => {
+                let map = t.read().unwrap();
+                map.values().map(|def| {
+                    let params = def.parameters.as_ref().map(|params| {
+                        params.iter().map(|p| {
+                            format!("    - {} ({}){}: {}",
+                                p.name,
+                                p.param_type,
+                                if p.required { ", required" } else { "" },
+                                p.description
+                            )
+                        }).collect::<Vec<_>>().join("\n")
+                    }).unwrap_or_else(|| "    - no parameters".to_string());
+
+                    format!("- {}: {}\n  parameters:\n{}", def.name, def.description, params)
+                }).collect::<Vec<_>>().join("\n\n")
+            },
+            None => "No tools available".to_string()
+        }
+    }
     
     pub fn get_name(&self) -> &str {
         &self.name
     }
 
-    pub async fn call_tool(&self, name: &str) -> Option<CallToolResult> {
-        let def = self.tools.as_ref()?.read().unwrap().get(name).cloned()?;
-        Some(Self::execute_tool(&def).await)
+    pub async fn call_tool(&self, name: &str, params: HashMap<String, String>) -> Option<CallToolResult> {
+        let mut def = self.tools.as_ref()?.read().unwrap().get(name).cloned()?;
+        
+        println!("Calling tool: '{}' with params: {:?}", name, params);
+        
+        if !params.is_empty() {
+            def.tool.path_params = Some(params);
+        }
 
+        Some(Self::execute_tool(&def).await)
     }
 
     async fn execute_tool(def: &DynamicToolDef) -> CallToolResult {
         match def.action {
             ActionType::http => {
                 let result = def.tool.request().await;
+                println!("Tool '{}' execution result: {:?}", def.name, result);
                 match result {
                     Ok(content) => {
                         let json_content = Content::json(content.clone()).unwrap_or_else(|_| Content::text("serialization error"));
@@ -136,6 +166,16 @@ impl ServerGenerator {
             })
     }
 
+    pub fn get_tools(&self) -> Vec<String> {
+        match &self.tools {
+            Some(t) => {
+                let map = t.read().unwrap();
+                map.keys().cloned().collect()
+            },
+            None => vec![]
+        }
+    }
+
  
     pub fn get_version(&self) -> &str {
         &self.version
@@ -158,7 +198,6 @@ impl ServerHandler for ServerGenerator {
                 description: None,
                 icons: None,
                 website_url: None,
-
             },
             instructions: None,
         }
@@ -166,9 +205,9 @@ impl ServerHandler for ServerGenerator {
 
     async fn list_tools(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, rmcp::Error> {
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
         eprintln!("list_tools called!"); // add this to confirm it's being hit
         
         let tools = match &self.tools {
@@ -189,10 +228,19 @@ impl ServerHandler for ServerGenerator {
 
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         _context: rmcp::service::RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, rmcp::Error> {
-        self.call_tool(&request.name).await
-            .ok_or_else(|| rmcp::Error::invalid_params("tool not found", None))
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let params: HashMap<String, String> = request.arguments
+            .as_ref()
+            .map(|p: &serde_json::Map<String, serde_json::Value>| {
+                p.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        self.call_tool(&request.name, params).await
+            .ok_or_else(|| rmcp::ErrorData::invalid_params("tool not found", None))
     }
 }

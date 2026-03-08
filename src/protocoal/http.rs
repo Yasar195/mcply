@@ -24,14 +24,14 @@ pub struct HttpProtocoal {
 impl HttpProtocoal {
     
 
-    pub async fn request(&self) -> Result<Value, reqwest::Error>{
+    pub async fn request(&self) -> Result<Value, reqwest::Error> {
         let client: Client = reqwest::Client::new();
 
         let mut final_url: String = self.url.clone();
 
         if let Some(path_params) = &self.path_params {
-            for(key, value) in path_params {
-                final_url = final_url.replace(&format!("{{{}}}", key), value)
+            for (key, value) in path_params {
+                final_url = final_url.replace(&format!("{{{}}}", key), value);
             }
         }
 
@@ -40,7 +40,7 @@ impl HttpProtocoal {
             HttpMethod::PATCH => client.patch(&final_url),
             HttpMethod::DELETE => client.delete(&final_url),
             HttpMethod::POST => client.post(&final_url),
-            HttpMethod::PUT => client.put(&final_url)
+            HttpMethod::PUT => client.put(&final_url),
         };
 
         if let Some(query_params) = &self.query_params {
@@ -48,19 +48,27 @@ impl HttpProtocoal {
         }
 
         if let Some(request_headers) = &self.request_headers {
-            for(key, value) in request_headers {
+            for (key, value) in request_headers {
                 request_builder = request_builder.header(key, value);
             }
         }
 
+        // Substitute placeholders in body
         if let Some(body) = &self.body {
-            request_builder = request_builder.json(body);
+            let mut body_str = body.to_string();
+
+            if let Some(path_params) = &self.path_params {
+                for (key, value) in path_params {
+                    body_str = body_str.replace(&format!("\"{{{}}}\"", key), &format!("\"{}\"", value));
+                }
+            }
+
+            let final_body: Value = serde_json::from_str(&body_str).unwrap_or(body.clone());
+            request_builder = request_builder.json(&final_body);
         }
 
         let response = request_builder.send().await?;
-        
         let json = response.json::<Value>().await?;
-
         Ok(json)
     }
 
