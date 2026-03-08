@@ -1,9 +1,10 @@
 use crate::protocoal::http::HttpProtocoal;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use rmcp::model::{ Tool, JsonObject };
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DynamicToolDef {
     pub name: String,
     pub description: String,
@@ -51,7 +52,7 @@ impl DynamicToolDef {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolParam {
     pub name: String,
     pub description: String,
@@ -59,7 +60,7 @@ pub struct ToolParam {
     pub param_type: String
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActionType {
     http
 }

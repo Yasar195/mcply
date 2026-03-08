@@ -35,14 +35,6 @@ pub struct ServerGeneratorConfig {
     pub version: String
 }
 
-// #[derive(Debug)]
-// pub struct Tool {
-//     pub tool_name: String,
-//     pub tool_url: String,
-//     pub tool_url_params: Option<Vec<HashMap<String, String>>>,
-//     pub tool_url_query: Option<Vec<Map<String, String>>>
-// }
-
 pub struct Resource {
 
 }
@@ -115,7 +107,6 @@ impl ServerGenerator {
         match def.action {
             ActionType::http => {
                 let result = def.tool.request().await;
-                println!("Tool '{}' execution result: {:?}", def.name, result);
                 match result {
                     Ok(content) => {
                         let json_content = Content::json(content.clone()).unwrap_or_else(|_| Content::text("serialization error"));
@@ -159,7 +150,6 @@ impl ServerGenerator {
                     .layer(cors);
 
                 let addr = format!("0.0.0.0:{}", port);
-                eprintln!("MCP HTTP server listening on http://{}/mcp", addr);
                 
                 let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
                 axum::serve(listener, router).await.unwrap();

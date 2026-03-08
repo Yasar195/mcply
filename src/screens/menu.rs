@@ -1,6 +1,7 @@
 // use crate::screens::settings::SettingsScreen;
 // use crate::screens::tasks::TasksScreen;
 use crate::screens::models::ModelsScreen;
+use crate::screens::mcp_servers::McpServersScreen;
 use crate::ui::navigation::NavigatableList;
 use crate::ui::screen::{Screen, ScreenAction};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -20,6 +21,7 @@ impl MenuScreen {
             state: ratatui::widgets::ListState::default(),
             options: vec![
                 "Models".to_string(),
+                "MCP Servers".to_string(),
                 "System".to_string(),
                 "Exit".to_string(),
             ],
@@ -48,8 +50,7 @@ impl Screen for MenuScreen {
                 let selected = self.list.state.selected().unwrap_or(0);
                 match self.list.options[selected].as_str() {
                     "Models" => Some(ScreenAction::Switch(Box::new(ModelsScreen::new()))),
-                    // "View Tasks" => Some(ScreenAction::Switch(Box::new(TasksScreen::new()))),
-                    // "Settings" => Some(ScreenAction::Switch(Box::new(SettingsScreen::new()))),
+                    "MCP Servers" => Some(ScreenAction::Switch(Box::new(McpServersScreen::new()))),
                     "Exit" => Some(ScreenAction::Exit),
                     _ => None,
                 }
@@ -72,13 +73,13 @@ impl Screen for MenuScreen {
                 Block::default()
                     .title(format!(" {} ", self.title))
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Green))
+                    .border_style(Style::default().fg(Color::Cyan))
                     .style(Style::default().bg(Color::Black)),
             )
             .highlight_style(
                 Style::default()
-                    .bg(Color::LightYellow)
-                    .fg(Color::White)
+                    .bg(Color::DarkGray)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol(">>");
