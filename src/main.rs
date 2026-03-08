@@ -8,6 +8,9 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
+mod dyns;
+mod protocoal;
+mod generators;
 mod model;
 mod persistence;
 mod screens;

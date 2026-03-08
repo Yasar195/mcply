@@ -34,6 +34,32 @@ impl Persistence {
                 )",
                 [],
             ).expect("Failed to create models table");
+
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS mcp_servers (
+                    id      INTEGER PRIMARY KEY,
+                    name    TEXT NOT NULL,
+                    version TEXT NOT NULL DEFAULT '1.0.0'
+                )",
+                [],
+            ).expect("Failed to create mcp_servers table");
+
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS mcp_server_tools (
+                    id        INTEGER PRIMARY KEY,
+                    server_id INTEGER NOT NULL
+                        REFERENCES mcp_servers(id) ON DELETE CASCADE,
+                    tool_name TEXT NOT NULL,
+                    tool_def  TEXT NOT NULL
+                )",
+                [],
+            ).expect("Failed to create mcp_server_tools table");
+
+            // Migration: Add tool_def column if it doesn't exist. Ignore error if it does.
+            let _ = conn.execute(
+                "ALTER TABLE mcp_server_tools ADD COLUMN tool_def TEXT NOT NULL DEFAULT '{}'",
+                [],
+            );
         }
     }
 
@@ -105,6 +131,23 @@ impl Persistence {
         }
     }
 
+    /// Fetch all rows where `parent_id` matches a foreign-key column.
+    /// The SQL must be `SELECT ... WHERE fk_col = ?1 ORDER BY ...`
+    pub fn get_by_parent<T: Persistable>(&self, parent_id: i64) -> Vec<T> {
+        let mut items = Vec::new();
+        if let Some(conn) = &self.connection {
+            let sql = T::get_by_parent_sql();
+            let mut stmt = conn.prepare(sql.as_str()).expect("Failed to prepare statement");
+            let rows = stmt
+                .query_map([parent_id], |row| T::from_row(row))
+                .expect("Failed to query items");
+            for item in rows {
+                items.push(item.expect("Failed to map item"));
+            }
+        }
+        items
+    }
+
 }
 
 
@@ -115,6 +158,9 @@ pub trait Persistable: Sized {
     fn update_sql() -> String;
     fn update_params(&self) -> Vec<&dyn rusqlite::ToSql>;
     fn get_all_sql() -> String;
+    fn get_by_parent_sql() -> String {
+        panic!("get_by_parent_sql not implemented for this type")
+    }
     fn delete_sql() -> String;
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self>;
 }
@@ -228,6 +274,94 @@ impl Persistable for Model {
             id: row.get(0)?,
             model_type: row.get(1)?,
             api_key: row.get(2)?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct McpServer {
+    pub id: Option<i64>,
+    pub name: String,
+    pub version: String,
+}
+
+impl Persistable for McpServer {
+    fn insert_sql(&self) -> String {
+        "INSERT INTO mcp_servers (name, version) VALUES (?1, ?2)".to_string()
+    }
+
+    fn params(&self) -> Vec<&dyn rusqlite::ToSql> {
+        vec![&self.name, &self.version]
+    }
+
+    fn update_sql() -> String {
+        "UPDATE mcp_servers SET name = ?1, version = ?2 WHERE id = ?3".to_string()
+    }
+
+    fn update_params(&self) -> Vec<&dyn rusqlite::ToSql> {
+        vec![&self.name, &self.version, &self.id]
+    }
+
+    fn get_all_sql() -> String {
+        "SELECT id, name, version FROM mcp_servers ORDER BY id DESC".to_string()
+    }
+
+    fn delete_sql() -> String {
+        "DELETE FROM mcp_servers WHERE id = ?1".to_string()
+    }
+
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(McpServer {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            version: row.get(2)?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct McpServerTool {
+    pub id: Option<i64>,
+    pub server_id: i64,
+    pub tool_name: String,
+    pub tool_def: String, // Stored as JSON string
+}
+
+impl Persistable for McpServerTool {
+    fn insert_sql(&self) -> String {
+        "INSERT INTO mcp_server_tools (server_id, tool_name, tool_def) VALUES (?1, ?2, ?3)".to_string()
+    }
+
+    fn params(&self) -> Vec<&dyn rusqlite::ToSql> {
+        vec![&self.server_id, &self.tool_name, &self.tool_def]
+    }
+
+    fn update_sql() -> String {
+        "UPDATE mcp_server_tools SET server_id = ?1, tool_name = ?2, tool_def = ?3 WHERE id = ?4".to_string()
+    }
+
+    fn update_params(&self) -> Vec<&dyn rusqlite::ToSql> {
+        vec![&self.server_id, &self.tool_name, &self.tool_def, &self.id]
+    }
+
+    fn get_all_sql() -> String {
+        "SELECT id, server_id, tool_name, tool_def FROM mcp_server_tools ORDER BY id ASC".to_string()
+    }
+
+    fn get_by_parent_sql() -> String {
+        "SELECT id, server_id, tool_name, tool_def FROM mcp_server_tools WHERE server_id = ?1 ORDER BY id ASC".to_string()
+    }
+
+    fn delete_sql() -> String {
+        "DELETE FROM mcp_server_tools WHERE id = ?1".to_string()
+    }
+
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(McpServerTool {
+            id: row.get(0)?,
+            server_id: row.get(1)?,
+            tool_name: row.get(2)?,
+            tool_def: row.get(3)?,
         })
     }
 }
