@@ -16,7 +16,7 @@ use ratatui::{
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
-fn published_ports() -> &'static RwLock<HashMap<i64, u16>> {
+pub fn published_ports() -> &'static RwLock<HashMap<i64, u16>> {
     static PORTS: OnceLock<RwLock<HashMap<i64, u16>>> = OnceLock::new();
     PORTS.get_or_init(|| RwLock::new(HashMap::new()))
 }

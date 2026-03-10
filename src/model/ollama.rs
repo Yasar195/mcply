@@ -2,9 +2,7 @@ use std::pin::Pin;
 
 use reqwest::{Client, Error};
 
-use crate::model::model::Model;
-
-
+use crate::model::model::{Model, ChatMessage};
 
 pub struct OllamaModel {
     pub client: Client
@@ -30,27 +28,27 @@ impl Model for OllamaModel {
     }
 
 
-    fn chat(&self, message: String, model: String) -> Pin<Box<dyn Future<Output = Result<String, Error>> + Send + '_>> {
+    fn chat(&self, messages: Vec<ChatMessage>, model: String, tools: Option<serde_json::Value>) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Error>> + Send + '_>> {
        Box::pin(async move {
+            let mut payload = serde_json::json!({
+                "model": model,
+                "messages": messages,
+                "stream": false
+            });
+            if let Some(t) = tools {
+                payload.as_object_mut().unwrap().insert("tools".to_string(), t);
+            }
+
             let response = self.client
-                .post("http://localhost:11434/api/generate")
+                .post("http://localhost:11434/api/chat")
                 .timeout(std::time::Duration::from_secs(60))
-                .json(&serde_json::json!({
-                    "model": model,
-                    "prompt": message,
-                    "stream": false   // <-- back to false, simpler and reliable
-                }))
+                .json(&payload)
                 .send()
                 .await?;
 
             let body: serde_json::Value = response.json().await?;
             
-            let reply = body["response"]
-                .as_str()
-                .unwrap_or("No response")
-                .to_string();
-
-            Ok(reply)
+            Ok(body)
         })
     }
 
