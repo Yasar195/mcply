@@ -28,6 +28,7 @@ enum ScreenMode {
     ModelSelection,
     ServerSelection,
     Chatting,
+    ModelSwitching,
 }
 
 pub struct ChatScreen {
@@ -43,11 +44,16 @@ pub struct ChatScreen {
     // Chat session state
     selected_model: Option<PersistentModel>,
     selected_server: Option<(McpServer, u16)>,
+    selected_provider_model: String, // The actual model name to use from the provider
     chat_history: Vec<(String, String)>, // (Role, Message) used for UI display
     input_text: String,
     
+    // Model switcher state
+    available_models: Vec<String>, // Models from the provider
+    switching_is_loading: bool,
+    
     // Async worker channel
-    tx: Option<mpsc::Sender<(String, String)>>, // To send user inputs to the bg thread
+    tx: Option<mpsc::Sender<(String, String, String)>>, // To send user inputs to the bg thread (role, message, model_name)
     rx: Option<mpsc::Receiver<(String, String)>>, // To receive UI updates (Role, Message) from bg thread
     is_loading: bool,
 
@@ -79,8 +85,11 @@ impl ChatScreen {
             server_list: NavigatableList { state: ratatui::widgets::ListState::default(), options: vec![] },
             selected_model: None,
             selected_server: None,
+            selected_provider_model: String::new(),
             chat_history: Vec::new(),
             input_text: String::new(),
+            available_models: Vec::new(),
+            switching_is_loading: false,
             tx: None,
             rx: None,
             is_loading: false,
@@ -121,6 +130,26 @@ impl ChatScreen {
             self.chat_history.push(("System".to_string(), format!("Connected to MCP Server: {} on port {}", srv.name, port)));
         }
 
+        // Initialize the provider model name
+        if let Some(model) = &self.selected_model {
+            let model_type = model.model_type.clone();
+            let api_key = model.api_key.clone();
+            
+            // Create tokio runtime and fetch available models
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let models = rt.block_on(Self::fetch_available_models(&model_type, api_key));
+            
+            if let Some(first_model) = models.first() {
+                self.selected_provider_model = first_model.clone();
+            } else {
+                // Fallback to a default model
+                self.selected_provider_model = match model_type.as_str() {
+                    "Groq" => "llama3-8b-8192".to_string(),
+                    _ => "llama3.1".to_string(),
+                };
+            }
+        }
+
         let (ui_tx, ui_rx) = mpsc::channel(); // Updates sent TO the UI
         let (bg_tx, bg_rx) = mpsc::channel(); // Inputs sent TO the background thread
 
@@ -129,6 +158,7 @@ impl ChatScreen {
 
         let model_config = self.selected_model.as_ref().unwrap().clone();
         let server_config = self.selected_server.clone();
+        let selected_model_name = self.selected_provider_model.clone();
 
         self.background_thread = Some(thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -176,10 +206,29 @@ impl ChatScreen {
                     mcp_client = Some(client);
                 }
 
+                // Add system message separately (don't store in history to avoid duplication)
+                let system_message = if mcp_tools.is_some() {
+                    Some(ChatMessage {
+                        role: "system".to_string(),
+                        content: "You have access to tools that can help answer user queries. When a user asks about product information, product lists, or anything else that tools can help with, use the available tools to get accurate information. Always prefer using tools when they are relevant to the query.".to_string(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                    })
+                } else {
+                    None
+                };
+
                 // 2. Chat Processing Loop
                 // Wait for a user message from the UI
-                while let Ok((role, content)) = bg_rx.recv() {
+                while let Ok((role, content, current_model_name)) = bg_rx.recv() {
                     if role == "EXIT" { break; }
+                    
+                    // Update the model name if a new one was sent
+                    let active_model_name = if current_model_name.is_empty() { 
+                        selected_model_name.clone() 
+                    } else { 
+                        current_model_name 
+                    };
                     
                     history.push(ChatMessage {
                         role: "user".to_string(),
@@ -189,19 +238,49 @@ impl ChatScreen {
                     });
 
                     // Recursive loop to process tool choices
+                    let mut retry_without_tools = false;
+                    let mut last_tool_calls: Vec<String> = Vec::new();
+                    let mut tool_call_repeat_count = 0;
                     loop {
+                        // Build messages to send: system message + optimized history
+                        // When retrying without tools, send ONLY the current user message to avoid format errors
+                        let messages_to_send = if retry_without_tools {
+                            // Retry mode: just the current user message for models that don't support tools
+                            vec![ChatMessage {
+                                role: "user".to_string(),
+                                content: content.clone(),
+                                tool_call_id: None,
+                                tool_calls: None,
+                            }]
+                        } else {
+                            // Normal mode: system + optimized history
+                            // First build with system + full history
+                            let mut msgs = Vec::new();
+                            if let Some(ref sys_msg) = system_message {
+                                msgs.push(sys_msg.clone());
+                            }
+                            msgs.extend(history.clone());
+                            
+                            // Then optimize to keep only recent context
+                            ChatMessage::optimize_messages(msgs, 15)
+                        };
+                        
+                        // Log token estimate (rough: ~4 chars per token)
+                        let estimated_tokens = messages_to_send.iter()
+                            .map(|m| (m.content.len() / 4).max(1))
+                            .sum::<usize>();
+                        if estimated_tokens > 4000 {
+                            let _ = ui_tx.send(("System".to_string(), format!("⚠️  Large request (~{} tokens). Sending may be slow or fail with rate limits.", estimated_tokens)));
+                        }
+                        
                         let result: Result<Value, _> = match model_config.model_type.as_str() {
                             "Groq" => {
                                 let m = GroqModel::new("https://api.groq.com/openai/v1".to_string(), model_config.api_key.clone().unwrap_or_default());
-                                let models = m.list_models().await.unwrap_or_default();
-                                let target_model = models.into_iter().next().unwrap_or("llama3-8b-8192".to_string());
-                                m.chat(history.clone(), target_model, mcp_tools.clone()).await
+                                m.chat(messages_to_send, active_model_name.clone(), mcp_tools.clone()).await
                             }
                             "Ollama" | _ => {
                                 let m = OllamaModel::new();
-                                let models = m.list_models().await.unwrap_or_default();
-                                let target_model = models.into_iter().next().unwrap_or("llama3.1".to_string());
-                                m.chat(history.clone(), target_model, mcp_tools.clone()).await
+                                m.chat(messages_to_send, active_model_name.clone(), mcp_tools.clone()).await
                             }
                         };
 
@@ -223,6 +302,23 @@ impl ChatScreen {
                                         });
 
                                         if let Some(calls) = tool_calls.as_ref().and_then(|t| t.as_array()) {
+                                            // Check for repeated tool calls (safety against infinite loops)
+                                            let current_tool_calls: Vec<String> = calls.iter()
+                                                .filter_map(|c| c.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string()))
+                                                .collect();
+                                            
+                                            if current_tool_calls == last_tool_calls {
+                                                tool_call_repeat_count += 1;
+                                                if tool_call_repeat_count > 1 {
+                                                    // Same tools called twice in a row - break to prevent infinite loop
+                                                    let _ = ui_tx.send(("System".to_string(), "⚠️  Stopped: Tool calling loop detected. Model is repeating same tool calls.".to_string()));
+                                                    break;
+                                                }
+                                            } else {
+                                                tool_call_repeat_count = 0;
+                                            }
+                                            last_tool_calls = current_tool_calls;
+                                            
                                             for call in calls {
                                                 if let (Some(id), Some(func)) = (call.get("id").and_then(|i| i.as_str()), call.get("function")) {
                                                     let func_name = func.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -244,10 +340,16 @@ impl ChatScreen {
                                                         }
                                                     }
 
-                                                    // Push result
+                                                    // Truncate large tool outputs before storing to keep token usage low
+                                                    let truncated_output = if output.len() > 2000 {
+                                                        format!("(truncated) {}", &output[..2000])
+                                                    } else {
+                                                        output.clone()
+                                                    };
+                                                    // Push truncated result
                                                     history.push(ChatMessage {
                                                         role: "tool".to_string(),
-                                                        content: output,
+                                                        content: truncated_output,
                                                         tool_call_id: Some(id.to_string()),
                                                         tool_calls: None,
                                                     });
@@ -273,6 +375,23 @@ impl ChatScreen {
                                     });
 
                                     if let Some(calls) = tool_calls.as_ref().and_then(|t| t.as_array()) {
+                                        // Check for repeated tool calls (safety against infinite loops)
+                                        let current_tool_calls: Vec<String> = calls.iter()
+                                            .filter_map(|c| c.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string()))
+                                            .collect();
+                                        
+                                        if current_tool_calls == last_tool_calls {
+                                            tool_call_repeat_count += 1;
+                                            if tool_call_repeat_count > 1 {
+                                                // Same tools called twice in a row - break to prevent infinite loop
+                                                let _ = ui_tx.send(("System".to_string(), "⚠️  Stopped: Tool calling loop detected. Model is repeating same tool calls.".to_string()));
+                                                break;
+                                            }
+                                        } else {
+                                            tool_call_repeat_count = 0;
+                                        }
+                                        last_tool_calls = current_tool_calls;
+                                        
                                         for call in calls {
                                             if let Some(func) = call.get("function") {
                                                 let func_name = func.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -311,7 +430,19 @@ impl ChatScreen {
                                 }
                             }
                             Err(e) => {
-                                let _ = ui_tx.send(("System".to_string(), format!("API Error: {}", e)));
+                                let error_msg = e.to_string();
+                                eprintln!("Chat error: {}", error_msg); // Debug logging
+                                
+                                // If error is about tool calling, retry without tools
+                                if (error_msg.contains("tool") || error_msg.contains("Tool")) && mcp_tools.is_some() && !retry_without_tools {
+                                    let _ = ui_tx.send(("System".to_string(), "Model doesn't support tools, retrying without MCP...".to_string()));
+                                    mcp_tools = None;
+                                    retry_without_tools = true;
+                                    // Don't break - continue the loop to retry without tools
+                                    continue;
+                                }
+                                
+                                let _ = ui_tx.send(("System".to_string(), format!("API Error: {}", error_msg)));
                             }
                         }
                         // Break out of the recursive tool loop if complete
@@ -386,7 +517,7 @@ impl ChatScreen {
             match key.code {
                 KeyCode::Esc => {
                     if let Some(tx) = &self.tx {
-                        let _ = tx.send(("EXIT".to_string(), "".to_string()));
+                        let _ = tx.send(("EXIT".to_string(), "".to_string(), String::new()));
                     }
                     self.mode = ScreenMode::ModelSelection;
                     return None;
@@ -396,6 +527,32 @@ impl ChatScreen {
         }
 
         match key.code {
+            KeyCode::Tab => {
+                // Open model switcher
+                self.mode = ScreenMode::ModelSwitching;
+                self.switching_is_loading = true;
+                self.available_models.clear();
+                self.model_list.options.clear();
+                self.model_list.state.select(Some(0));
+                
+                if let Some(model) = &self.selected_model {
+                    let model_type = model.model_type.clone();
+                    let api_key = model.api_key.clone();
+                    
+                    // Create tokio runtime and fetch models
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    let models = rt.block_on(Self::fetch_available_models(&model_type, api_key));
+                    
+                    self.available_models = models.clone();
+                    self.model_list.options = models;
+                    if !self.model_list.options.is_empty() {
+                        self.model_list.state.select(Some(0));
+                    }
+                }
+                
+                self.switching_is_loading = false;
+                None
+            }
             KeyCode::Char(c) => {
                 self.input_text.push(c);
                 None
@@ -411,18 +568,78 @@ impl ChatScreen {
                     self.input_text.clear();
                     self.is_loading = true;
                     if let Some(tx) = &self.tx {
-                        let _ = tx.send(("user".to_string(), msg));
+                        let _ = tx.send(("user".to_string(), msg, self.selected_provider_model.clone()));
                     }
                 }
                 None
             }
             KeyCode::Esc => {
                 if let Some(tx) = &self.tx {
-                    let _ = tx.send(("EXIT".to_string(), "".to_string()));
+                    let _ = tx.send(("EXIT".to_string(), "".to_string(), String::new()));
                 }
                 return Some(ScreenAction::Switch(Box::new(MenuScreen::new())));
             }
             _ => None,
+        }
+    }
+
+    fn handle_model_switching_input(&mut self, key: KeyEvent) -> Option<ScreenAction> {
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.model_list.next();
+                None
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.model_list.previous();
+                None
+            }
+            KeyCode::Enter => {
+                if let Some(idx) = self.model_list.state.selected() {
+                    if idx < self.available_models.len() {
+                        let selected_model_name = self.available_models[idx].clone();
+                        self.selected_provider_model = selected_model_name.clone();
+                        self.chat_history.push(("System".to_string(), format!("Switched to model: {}", selected_model_name)));
+                    }
+                }
+                self.mode = ScreenMode::Chatting;
+                None
+            }
+            KeyCode::Esc => {
+                self.mode = ScreenMode::Chatting;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    async fn fetch_available_models(model_type: &str, api_key: Option<String>) -> Vec<String> {
+        match model_type {
+            "Groq" => {
+                let groq = GroqModel::new(
+                    "https://api.groq.com/openai/v1".to_string(),
+                    api_key.unwrap_or_default()
+                );
+                let models = groq.list_models().await.unwrap_or_default();
+                // Filter out non-chat models: audio, embedding, vision-only, safety/moderation models
+                models.into_iter()
+                    .filter(|m| {
+                        !m.contains("whisper") 
+                            && !m.contains("embed") 
+                            && !m.contains("vision")
+                            && !m.contains("guard")
+                            && !m.contains("safeguard")
+                            && !m.contains("classify")
+                    })
+                    .collect()
+            }
+            "Ollama" | _ => {
+                let ollama = OllamaModel::new();
+                let models = ollama.list_models().await.unwrap_or_default();
+                // Filter out non-chat models
+                models.into_iter()
+                    .filter(|m| !m.contains("embed") && !m.contains("vision"))
+                    .collect()
+            }
         }
     }
 
@@ -514,7 +731,7 @@ impl ChatScreen {
 
         frame.render_widget(log_block, chunks[0]);
 
-        let input_title = if self.is_loading { " Waiting for AI... " } else { " Type a message (Enter to send) " };
+        let input_title = if self.is_loading { " Waiting for AI... " } else { " Type a message (Enter to send, Tab to switch model) " };
         let input_color = if self.is_loading { Color::DarkGray } else { Color::Yellow };
         let input_text = if self.is_loading { String::new() } else { format!("> {}", self.input_text) };
 
@@ -522,6 +739,104 @@ impl ChatScreen {
             .block(Block::default().title(input_title).borders(Borders::ALL).border_style(Style::default().fg(input_color)));
 
         frame.render_widget(input_block, chunks[1]);
+    }
+
+    fn render_model_switcher(&mut self, frame: &mut Frame, area: Rect) {
+        // Render the chat in the background
+        self.pump_events();
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(3),
+            ])
+            .split(area);
+
+        let mut log_lines = Vec::new();
+        for (role, msg) in &self.chat_history {
+            let color = match role.as_str() {
+                "You" => Color::Green,
+                "AI" => Color::Magenta,
+                "System" => Color::DarkGray,
+                _ => Color::DarkGray,
+            };
+            
+            if !msg.is_empty() {
+                log_lines.push(Line::from(vec![Span::styled(format!("{}: ", role), Style::default().fg(color).add_modifier(Modifier::BOLD))]));
+                for line in msg.lines() {
+                    log_lines.push(Line::from(vec![Span::raw(line)]));
+                }
+                log_lines.push(Line::from(vec![Span::raw("")]));
+            }
+        }
+
+        if self.is_loading {
+            log_lines.push(Line::from(vec![Span::styled("AI is thinking...", Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC))]));
+        }
+
+        let log_height = log_lines.len() as u16;
+        let view_height = chunks[0].height.saturating_sub(2);
+        let scroll_offset = if log_height > view_height { log_height - view_height } else { 0 };
+
+        let server_title = self.selected_server.as_ref().map(|s| format!(" [+{} MCP]", s.0.name)).unwrap_or_default();
+        let log_block = Paragraph::new(log_lines)
+            .block(Block::default().title(format!(" Chat with {}{} ", self.selected_model.as_ref().unwrap().model_type, server_title)).borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)))
+            .scroll((scroll_offset, 0));
+
+        frame.render_widget(log_block, chunks[0]);
+
+        // Render model switcher overlay on top
+        let popup_width = 50;
+        let popup_height = (self.available_models.len() as u16).min(15) + 4;
+        
+        let popup_left = (area.width.saturating_sub(popup_width)) / 2;
+        let popup_top = (area.height.saturating_sub(popup_height)) / 2;
+        
+        let popup_area = Rect {
+            x: popup_left,
+            y: popup_top,
+            width: popup_width,
+            height: popup_height,
+        };
+
+        // Render background overlay (semi-transparent effect via darkened background)
+        let overlay_block = Block::default()
+            .style(Style::default().bg(Color::Black).fg(Color::Gray))
+            .title(" Switch Model ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+
+        let items: Vec<ListItem> = self.available_models.iter().enumerate().map(|(i, model)| {
+            let content = if Some(i) == self.model_list.state.selected() {
+                Line::from(vec![Span::styled(format!(">> {} ", model), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))])
+            } else {
+                Line::from(vec![Span::raw(format!("   {} ", model))])
+            };
+            ListItem::new(content)
+        }).collect();
+
+        let list_widget = List::new(items)
+            .block(overlay_block)
+            .style(Style::default().bg(Color::Black));
+
+        frame.render_stateful_widget(list_widget, popup_area, &mut self.model_list.state);
+
+        // Render footer
+        let footer_area = Rect {
+            x: popup_left,
+            y: popup_top + popup_height.saturating_sub(1),
+            width: popup_width,
+            height: 1,
+        };
+
+        let footer = Line::from(vec![
+            Span::styled(" Enter ", Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(" Select  ", Style::default().fg(Color::Gray)),
+            Span::styled(" Esc ", Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(" Cancel ", Style::default().fg(Color::Gray)),
+        ]);
+        frame.render_widget(Paragraph::new(footer).style(Style::default().bg(Color::Black)), footer_area);
     }
 }
 
@@ -531,6 +846,7 @@ impl Screen for ChatScreen {
             ScreenMode::ModelSelection => self.handle_model_selection_input(key),
             ScreenMode::ServerSelection => self.handle_server_selection_input(key),
             ScreenMode::Chatting => self.handle_chat_input(key),
+            ScreenMode::ModelSwitching => self.handle_model_switching_input(key),
         }
     }
 
@@ -539,6 +855,7 @@ impl Screen for ChatScreen {
             ScreenMode::ModelSelection => Self::render_list_view(frame, area, "Select AI Model for Chat", &mut self.model_list),
             ScreenMode::ServerSelection => Self::render_list_view(frame, area, "Select MCP Server", &mut self.server_list),
             ScreenMode::Chatting => self.render_chat(frame, area),
+            ScreenMode::ModelSwitching => self.render_model_switcher(frame, area),
         }
     }
 }

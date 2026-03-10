@@ -1,8 +1,9 @@
 use std::pin::Pin;
 
-use reqwest::{Client, Error};
+use reqwest::Client;
 
 use crate::model::model::{Model, ChatMessage};
+use crate::model::ModelError;
 
 pub struct OllamaModel {
     pub client: Client
@@ -17,7 +18,7 @@ impl OllamaModel {
 }
 
 impl Model for OllamaModel {
-    fn connect(&self, api_key: Option<String>) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + '_>> {
+    fn connect(&self, _api_key: Option<String>) -> Pin<Box<dyn Future<Output = Result<(), ModelError>> + Send + '_>> {
         Box::pin(async move {
             self.client
                 .get("http://localhost:11434/api/tags")
@@ -28,15 +29,21 @@ impl Model for OllamaModel {
     }
 
 
-    fn chat(&self, messages: Vec<ChatMessage>, model: String, tools: Option<serde_json::Value>) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Error>> + Send + '_>> {
+    fn chat(&self, messages: Vec<ChatMessage>, model: String, tools: Option<serde_json::Value>) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ModelError>> + Send + '_>> {
        Box::pin(async move {
             let mut payload = serde_json::json!({
                 "model": model,
                 "messages": messages,
                 "stream": false
             });
+            
+            // Only add tools if they exist and are not empty
             if let Some(t) = tools {
-                payload.as_object_mut().unwrap().insert("tools".to_string(), t);
+                if let Some(arr) = t.as_array() {
+                    if !arr.is_empty() {
+                        payload.as_object_mut().unwrap().insert("tools".to_string(), t);
+                    }
+                }
             }
 
             let response = self.client
@@ -48,11 +55,17 @@ impl Model for OllamaModel {
 
             let body: serde_json::Value = response.json().await?;
             
+            // Check if the API returned an error in the response body
+            if let Some(error_msg) = body.get("error").and_then(|e| e.as_str()) {
+                // Create a custom error that the caller can catch
+                return Err(ModelError::CustomError(error_msg.to_string()));
+            }
+            
             Ok(body)
         })
     }
 
-    fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>> + Send + '_>> {
+    fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>, ModelError>> + Send + '_>> {
         Box::pin(async move {
             let response = self.client
                 .get("http://localhost:11434/api/tags")
