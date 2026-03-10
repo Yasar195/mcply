@@ -102,11 +102,11 @@ jobs:
             "version": "$VERSION",
             "release_date": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
             "downloads": {
-              "linux-amd64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/todo-linux-amd64.tar.gz",
-              "linux-musl-amd64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/todo-linux-musl-amd64.tar.gz",
-              "macos-amd64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/todo-macos-amd64.tar.gz",
-              "macos-arm64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/todo-macos-arm64.tar.gz",
-              "windows-amd64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/todo-windows-amd64.exe.zip"
+              "linux-amd64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/mcply-linux-amd64.tar.gz",
+              "linux-musl-amd64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/mcply-linux-musl-amd64.tar.gz",
+              "macos-amd64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/mcply-macos-amd64.tar.gz",
+              "macos-arm64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/mcply-macos-arm64.tar.gz",
+              "windows-amd64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/mcply-windows-amd64.exe.zip"
             }
           }
           EOF
