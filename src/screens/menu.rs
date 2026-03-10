@@ -2,6 +2,7 @@
 // use crate::screens::tasks::TasksScreen;
 use crate::screens::models::ModelsScreen;
 use crate::screens::mcp_servers::McpServersScreen;
+use crate::screens::chat::ChatScreen;
 use crate::ui::navigation::NavigatableList;
 use crate::ui::screen::{Screen, ScreenAction};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -20,6 +21,7 @@ impl MenuScreen {
         let mut list = NavigatableList {
             state: ratatui::widgets::ListState::default(),
             options: vec![
+                "Chat".to_string(),
                 "Models".to_string(),
                 "MCP Servers".to_string(),
                 "System".to_string(),
@@ -49,6 +51,7 @@ impl Screen for MenuScreen {
             KeyCode::Enter => {
                 let selected = self.list.state.selected().unwrap_or(0);
                 match self.list.options[selected].as_str() {
+                    "Chat" => Some(ScreenAction::Switch(Box::new(ChatScreen::new()))),
                     "Models" => Some(ScreenAction::Switch(Box::new(ModelsScreen::new()))),
                     "MCP Servers" => Some(ScreenAction::Switch(Box::new(McpServersScreen::new()))),
                     "Exit" => Some(ScreenAction::Exit),

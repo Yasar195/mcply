@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use reqwest::{Client, Error};
 
-use crate::model::model::Model;
+use crate::model::model::{Model, ChatMessage};
 
 pub struct GroqModel {
     pub client: Client,
@@ -32,27 +32,27 @@ impl Model for GroqModel {
         })
     }
 
-    fn chat(&self, message: String, model: String) -> Pin<Box<dyn Future<Output = Result<String, Error>> + Send + '_>> {
+    fn chat(&self, messages: Vec<ChatMessage>, model: String, tools: Option<serde_json::Value>) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Error>> + Send + '_>> {
         Box::pin(async move {
+            let mut payload = serde_json::json!({
+                "model": model,
+                "messages": messages
+            });
+            if let Some(t) = tools {
+                payload.as_object_mut().unwrap().insert("tools".to_string(), t);
+                payload.as_object_mut().unwrap().insert("tool_choice".to_string(), serde_json::json!("auto"));
+            }
+
             let response = self.client
                 .post(format!("{}/chat/completions", self.api_url)) // <-- OpenAI format
                 .header("Authorization", format!("Bearer {}", self.api_key))
-                .json(&serde_json::json!({
-                    "model": model,
-                    "messages": [{"role": "user", "content": message}] // <-- OpenAI format
-                }))
+                .json(&payload)
                 .send()
                 .await?;
 
             let body: serde_json::Value = response.json().await?;
             
-            // OpenAI format: choices[0].message.content
-            let reply = body["choices"][0]["message"]["content"]
-                .as_str()
-                .unwrap_or("No response")
-                .to_string();
-
-            Ok(reply)
+            Ok(body)
         })
     }
 

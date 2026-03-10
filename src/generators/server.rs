@@ -198,16 +198,13 @@ impl ServerHandler for ServerGenerator {
         _request: Option<PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, rmcp::ErrorData> {
-        eprintln!("list_tools called!"); // add this to confirm it's being hit
         
         let tools = match &self.tools {
             Some(t) => {
                 let map = t.read().unwrap();
-                eprintln!("tool count: {}", map.len()); // confirm tools exist
                 map.values().map(|def| def.tool_schema()).collect()
             },
             None => {
-                eprintln!("tools is None!"); // diagnose the problem
                 vec![]
             }
         };
