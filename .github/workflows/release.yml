@@ -58,18 +58,15 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.artifact_name }}
-          cp ${{ matrix.asset_name }}.tar.gz todo-${{ matrix.target }}.tar.gz
           mv ${{ matrix.asset_name }}.tar.gz ../../..
-          mv todo-${{ matrix.target }}.tar.gz ../../..
+
           
       - name: Package (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
           7z a ${{ matrix.asset_name }}.zip ${{ matrix.artifact_name }}
-          cp ${{ matrix.asset_name }}.zip todo-${{ matrix.target }}.zip
           move ${{ matrix.asset_name }}.zip ..\..\..
-          move todo-${{ matrix.target }}.zip ..\..\..
           
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -77,9 +74,7 @@ jobs:
           name: ${{ matrix.asset_name }}
           path: |
             ${{ matrix.asset_name }}.tar.gz
-            todo-${{ matrix.target }}.tar.gz
             ${{ matrix.asset_name }}.zip
-            todo-${{ matrix.target }}.zip
 
   release:
     needs: build
