@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: mcply
+            asset_name: mcply-linux-amd64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact_name: mcply
+            asset_name: mcply-linux-musl-amd64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: mcply
+            asset_name: mcply-macos-amd64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: mcply
+            asset_name: mcply-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: mcply.exe
+            asset_name: mcply-windows-amd64.exe
+
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install musl tools (Linux musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+        
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.artifact_name }}
+          cp ${{ matrix.asset_name }}.tar.gz todo-${{ matrix.target }}.tar.gz
+          mv ${{ matrix.asset_name }}.tar.gz ../../..
+          mv todo-${{ matrix.target }}.tar.gz ../../..
+          
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          7z a ${{ matrix.asset_name }}.zip ${{ matrix.artifact_name }}
+          cp ${{ matrix.asset_name }}.zip todo-${{ matrix.target }}.zip
+          move ${{ matrix.asset_name }}.zip ..\..\..
+          move todo-${{ matrix.target }}.zip ..\..\..
+          
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: |
+            ${{ matrix.asset_name }}.tar.gz
+            todo-${{ matrix.target }}.tar.gz
+            ${{ matrix.asset_name }}.zip
+            todo-${{ matrix.target }}.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          
+      - name: Create version manifest
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          cat > version.json << EOF
+          {
+            "version": "$VERSION",
+            "release_date": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "downloads": {
+              "linux-amd64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/todo-linux-amd64.tar.gz",
+              "linux-musl-amd64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/todo-linux-musl-amd64.tar.gz",
+              "macos-amd64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/todo-macos-amd64.tar.gz",
+              "macos-arm64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/todo-macos-arm64.tar.gz",
+              "windows-amd64": "https://github.com/${{ github.repository }}/releases/download/$VERSION/todo-windows-amd64.exe.zip"
+            }
+          }
+          EOF
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/**/*
+            version.json
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
