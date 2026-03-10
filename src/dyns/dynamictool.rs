@@ -1,4 +1,4 @@
-use crate::protocoal::http::HttpProtocoal;
+use crate::protocol::http::HttpProtocoal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use rmcp::model::{ Tool, JsonObject };

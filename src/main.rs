@@ -9,7 +9,7 @@ use crossterm::{
 };
 
 mod dyns;
-mod protocoal;
+mod protocol;
 mod generators;
 mod model;
 mod persistence;

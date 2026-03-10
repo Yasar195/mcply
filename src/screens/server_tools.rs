@@ -1,6 +1,6 @@
 use crate::dyns::dynamictool::{ActionType, DynamicToolDef};
 use crate::persistence::persistence::{McpServerTool, Persistence};
-use crate::protocoal::http::{HttpMethod, HttpProtocoal};
+use crate::protocol::http::{HttpMethod, HttpProtocoal};
 use crate::ui::navigation::NavigatableList;
 use crate::ui::screen::{Screen, ScreenAction};
 use crossterm::event::{KeyCode, KeyEvent};
