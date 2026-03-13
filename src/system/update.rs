@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::error::Error;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const UPDATE_CHECK_URL: &str = "https://github.com/Yasar195/rust_cli_todo/releases/latest/download/version.json";
+const UPDATE_CHECK_URL: &str = "https://github.com/Yasar195/mcply/releases/latest/download/version.json";
 
 #[derive(Debug, Deserialize)]
 pub struct VersionInfo {
