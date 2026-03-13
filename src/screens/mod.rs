@@ -3,3 +3,5 @@ pub mod menu;
 pub mod models;
 pub mod server_tools;
 pub mod chat;
+pub mod system;
+pub mod update;

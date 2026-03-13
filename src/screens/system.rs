@@ -1,9 +1,5 @@
-// use crate::screens::settings::SettingsScreen;
-// use crate::screens::tasks::TasksScreen;
-use crate::screens::models::ModelsScreen;
-use crate::screens::mcp_servers::McpServersScreen;
-use crate::screens::chat::ChatScreen;
-use crate::screens::system::SystemScreen;
+use crate::screens::menu::MenuScreen;
+use crate::screens::update::UpdateScreen;
 use crate::ui::navigation::NavigatableList;
 use crate::ui::screen::{Screen, ScreenAction};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -12,33 +8,30 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, List, ListItem};
 use ratatui::Frame;
 
-pub struct MenuScreen {
+pub struct SystemScreen {
     pub title: String,
     pub list: NavigatableList,
 }
 
-impl MenuScreen {
+impl SystemScreen {
     pub fn new() -> Self {
         let mut list = NavigatableList {
             state: ratatui::widgets::ListState::default(),
             options: vec![
-                "Chat".to_string(),
-                "Models".to_string(),
-                "MCP Servers".to_string(),
-                "System".to_string(),
-                "Exit".to_string(),
+                "Update".to_string(),
+                "Back".to_string(),
             ],
         };
         list.state.select(Some(0));
 
-        MenuScreen {
-            title: "Main Menu - MCPLY".to_string(),
+        SystemScreen {
+            title: "System Menu".to_string(),
             list,
         }
     }
 }
 
-impl Screen for MenuScreen {
+impl Screen for SystemScreen {
     fn handle_input(&mut self, key: KeyEvent) -> Option<ScreenAction> {
         match key.code {
             KeyCode::Down => {
@@ -52,15 +45,12 @@ impl Screen for MenuScreen {
             KeyCode::Enter => {
                 let selected = self.list.state.selected().unwrap_or(0);
                 match self.list.options[selected].as_str() {
-                    "Chat" => Some(ScreenAction::Switch(Box::new(ChatScreen::new()))),
-                    "Models" => Some(ScreenAction::Switch(Box::new(ModelsScreen::new()))),
-                    "MCP Servers" => Some(ScreenAction::Switch(Box::new(McpServersScreen::new()))),
-                    "System" => Some(ScreenAction::Switch(Box::new(SystemScreen::new()))),
-                    "Exit" => Some(ScreenAction::Exit),
+                    "Update" => Some(ScreenAction::Switch(Box::new(UpdateScreen::new()))),
+                    "Back" => Some(ScreenAction::Switch(Box::new(MenuScreen::new()))),
                     _ => None,
                 }
             }
-            KeyCode::Char('q') => Some(ScreenAction::Exit),
+            KeyCode::Esc | KeyCode::Char('b') => Some(ScreenAction::Switch(Box::new(MenuScreen::new()))),
             _ => None,
         }
     }
@@ -78,13 +68,13 @@ impl Screen for MenuScreen {
                 Block::default()
                     .title(format!(" {} ", self.title))
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(Color::Yellow))
                     .style(Style::default().bg(Color::Black)),
             )
             .highlight_style(
                 Style::default()
                     .bg(Color::DarkGray)
-                    .fg(Color::Cyan)
+                    .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol(">>");
