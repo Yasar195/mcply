@@ -66,8 +66,8 @@ fn get_platform_identifier() -> &'static str {
 pub fn perform_update() -> Result<(), Box<dyn Error>> {
     let status = self_update::backends::github::Update::configure()
         .repo_owner("Yasar195")
-        .repo_name("rust_cli_todo")
-        .bin_name("todo")
+        .repo_name("mcply")
+        .bin_name("mcply")
         .target(get_platform_identifier())
         .current_version(VERSION)
         .build()?
