@@ -105,7 +105,7 @@ impl ServerGenerator {
 
     async fn execute_tool(def: &DynamicToolDef) -> CallToolResult {
         match def.action {
-            ActionType::http => {
+            ActionType::Http => {
                 let result = def.tool.request().await;
                 match result {
                     Ok(content) => {

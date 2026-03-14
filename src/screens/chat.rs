@@ -210,7 +210,13 @@ impl ChatScreen {
                 let system_message = if mcp_tools.is_some() {
                     Some(ChatMessage {
                         role: "system".to_string(),
-                        content: "You have access to tools that can help answer user queries. When a user asks about product information, product lists, or anything else that tools can help with, use the available tools to get accurate information. Always prefer using tools when they are relevant to the query.".to_string(),
+                        content: Some("You are a helpful assistant with access to tools. You MUST use the available tools to answer user questions. 
+
+CRITICAL TOOL INSTRUCTIONS:
+1. ALWAYS use the native JSON tool-calling format. NEVER write out plain text explaining what you will do.
+2. DO NOT hallucinate, guess, or make up placeholder data (e.g. fake todo lists). You must fetch real data using the tools.
+3. If a tool has optional parameters and the user didn't specify them (e.g., they just said 'fetch todos'), DO NOT ASK for more information. YOU MUST CALL THE TOOL IMMEDIATELY with an empty arguments object `{}` or by omitting the optional fields.
+4. Calling a tool with no arguments is completely valid and expected when parameters are optional. Do not hesitate.".to_string()),
                         tool_call_id: None,
                         tool_calls: None,
                     })
@@ -232,7 +238,7 @@ impl ChatScreen {
                     
                     history.push(ChatMessage {
                         role: "user".to_string(),
-                        content: content.clone(),
+                        content: Some(content.clone()),
                         tool_call_id: None,
                         tool_calls: None,
                     });
@@ -248,7 +254,7 @@ impl ChatScreen {
                             // Retry mode: just the current user message for models that don't support tools
                             vec![ChatMessage {
                                 role: "user".to_string(),
-                                content: content.clone(),
+                                content: Some(content.clone()),
                                 tool_call_id: None,
                                 tool_calls: None,
                             }]
@@ -267,7 +273,7 @@ impl ChatScreen {
                         
                         // Log token estimate (rough: ~4 chars per token)
                         let estimated_tokens = messages_to_send.iter()
-                            .map(|m| (m.content.len() / 4).max(1))
+                            .map(|m| m.estimate_tokens())
                             .sum::<usize>();
                         if estimated_tokens > 4000 {
                             let _ = ui_tx.send(("System".to_string(), format!("⚠️  Large request (~{} tokens). Sending may be slow or fail with rate limits.", estimated_tokens)));
@@ -291,26 +297,37 @@ impl ChatScreen {
                                 if let Some(choices) = reply_val.get("choices").and_then(|c| c.as_array()) {
                                     if let Some(msg) = choices.get(0).and_then(|c| c.get("message")) {
                                         // Update history with Assistants intermediate response
-                                        let content_str = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                                        // content is null in Groq response when tool_calls is set — preserve that as None
+                                        let content_opt = msg.get("content").and_then(|c| c.as_str()).map(|s| s.to_string());
                                         let tool_calls = msg.get("tool_calls").cloned();
+                                        // Use the text content for display; send None to API when tool_calls is set
+                                        let content_str = content_opt.clone().unwrap_or_default();
                                         
                                         history.push(ChatMessage {
                                             role: "assistant".to_string(),
-                                            content: content_str.clone(),
+                                            // Groq requires null (not "") when tool_calls is present
+                                            content: if tool_calls.is_some() { None } else { content_opt },
                                             tool_calls: tool_calls.clone(),
                                             tool_call_id: None,
                                         });
 
                                         if let Some(calls) = tool_calls.as_ref().and_then(|t| t.as_array()) {
                                             // Check for repeated tool calls (safety against infinite loops)
+                                            // Include arguments in the signature to detect same-tool-different-params loops
                                             let current_tool_calls: Vec<String> = calls.iter()
-                                                .filter_map(|c| c.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string()))
+                                                .filter_map(|c| {
+                                                    let name = c.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str())?;
+                                                    let args = c.get("function").and_then(|f| f.get("arguments")).and_then(|a| a.as_str()).unwrap_or("{}");
+                                                    Some(format!("{}:{}", name, args))
+                                                })
                                                 .collect();
+
+                                            eprintln!("{:?}", current_tool_calls);
                                             
                                             if current_tool_calls == last_tool_calls {
                                                 tool_call_repeat_count += 1;
-                                                if tool_call_repeat_count > 1 {
-                                                    // Same tools called twice in a row - break to prevent infinite loop
+                                                if tool_call_repeat_count >= 1 {
+                                                    // Same tool+args called again - break to prevent infinite loop
                                                     let _ = ui_tx.send(("System".to_string(), "⚠️  Stopped: Tool calling loop detected. Model is repeating same tool calls.".to_string()));
                                                     break;
                                                 }
@@ -320,7 +337,9 @@ impl ChatScreen {
                                             last_tool_calls = current_tool_calls;
                                             
                                             for call in calls {
-                                                if let (Some(id), Some(func)) = (call.get("id").and_then(|i| i.as_str()), call.get("function")) {
+                                                if let Some(func) = call.get("function") {
+                                                    // use a fallback ID if the API omits it to ensure tool execution proceeds
+                                                    let id = call.get("id").and_then(|i| i.as_str()).unwrap_or("call_fallback");
                                                     let func_name = func.get("name").and_then(|n| n.as_str()).unwrap_or("");
                                                     let mut actual_name = func_name.to_string();
                                                     if let Some(mapped) = tool_name_map.get(func_name) {
@@ -349,7 +368,7 @@ impl ChatScreen {
                                                     // Push truncated result
                                                     history.push(ChatMessage {
                                                         role: "tool".to_string(),
-                                                        content: truncated_output,
+                                                        content: Some(truncated_output),
                                                         tool_call_id: Some(id.to_string()),
                                                         tool_calls: None,
                                                     });
@@ -364,26 +383,34 @@ impl ChatScreen {
                                     }
                                 } else if let Some(msg) = reply_val.get("message") {
                                     // Ollama response parsing
-                                    let content_str = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                                    let content_opt = msg.get("content").and_then(|c| c.as_str()).map(|s| s.to_string());
                                     let tool_calls = msg.get("tool_calls").cloned();
+                                    let content_str = content_opt.clone().unwrap_or_default();
 
                                     history.push(ChatMessage {
                                         role: "assistant".to_string(),
-                                        content: content_str.clone(),
+                                        content: if tool_calls.is_some() { None } else { content_opt },
                                         tool_calls: tool_calls.clone(),
                                         tool_call_id: None,
                                     });
 
                                     if let Some(calls) = tool_calls.as_ref().and_then(|t| t.as_array()) {
                                         // Check for repeated tool calls (safety against infinite loops)
+                                        // Include arguments in the signature to detect same-tool-different-params loops
                                         let current_tool_calls: Vec<String> = calls.iter()
-                                            .filter_map(|c| c.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string()))
+                                            .filter_map(|c| {
+                                                let func = c.get("function")?;
+                                                let name = func.get("name").and_then(|n| n.as_str())?;
+                                                // Ollama args come as an object, serialize for comparison
+                                                let args = func.get("arguments").map(|a| a.to_string()).unwrap_or_default();
+                                                Some(format!("{}:{}", name, args))
+                                            })
                                             .collect();
                                         
                                         if current_tool_calls == last_tool_calls {
                                             tool_call_repeat_count += 1;
-                                            if tool_call_repeat_count > 1 {
-                                                // Same tools called twice in a row - break to prevent infinite loop
+                                            if tool_call_repeat_count >= 1 {
+                                                // Same tool+args called again - break to prevent infinite loop
                                                 let _ = ui_tx.send(("System".to_string(), "⚠️  Stopped: Tool calling loop detected. Model is repeating same tool calls.".to_string()));
                                                 break;
                                             }
@@ -414,7 +441,7 @@ impl ChatScreen {
 
                                                 history.push(ChatMessage {
                                                     role: "tool".to_string(),
-                                                    content: output,
+                                                    content: Some(output),
                                                     tool_call_id: None,
                                                     tool_calls: None,
                                                 });

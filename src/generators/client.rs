@@ -104,12 +104,24 @@ impl ClientGenerator {
             task: None,
         }).await.ok()?;
 
-        Some(result.content
+        let mut parts: Vec<String> = result.content
             .iter()
-            .filter_map(|c| c.as_text())
-            .map(|t| t.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n"))
+            .filter_map(|c| {
+                if let Some(t) = c.as_text() {
+                    Some(t.text.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if let Some(json) = &result.structured_content {
+            if let Ok(s) = serde_json::to_string_pretty(json) {
+                parts.push(s);
+            }
+        }
+
+        Some(parts.join("\n"))
     }
 
 }
