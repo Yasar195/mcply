@@ -41,12 +41,12 @@ impl Model for GroqModel {
                 "messages": messages
             });
             
-            // Only add tools if they exist and are not empty
             if let Some(t) = tools {
                 if let Some(arr) = t.as_array() {
                     if !arr.is_empty() {
                         payload.as_object_mut().unwrap().insert("tools".to_string(), t);
-                        payload.as_object_mut().unwrap().insert("tool_choice".to_string(), serde_json::json!("auto"));
+                        // Let Groq API use default tool_choice ("auto") natively rather than explicitly injecting it,
+                        // which some models (like llama-3 on Groq) can misinterpret when parameters are empty.
                     }
                 }
             }

@@ -6,11 +6,25 @@ use crate::model::ModelError;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    /// Content may be null when the assistant returns only tool_calls.
+    /// Groq rejects an empty-string "" alongside tool_calls — it must be JSON null.
+    #[serde(default, serialize_with = "serialize_opt_str")]
+    pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+}
+
+/// Serialise `Option<String>` as either a JSON string or `null`.
+fn serialize_opt_str<S>(val: &Option<String>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match val {
+        Some(v) => s.serialize_str(v),
+        None => s.serialize_none(),
+    }
 }
 
 pub trait Model {
@@ -26,12 +40,12 @@ pub trait Model {
 impl ChatMessage {
     /// Estimate token count (rough approximation: ~4 characters per token)
     pub fn estimate_tokens(&self) -> usize {
-        (self.content.len() / 4).max(1)
+        (self.content.as_deref().unwrap_or("").len() / 4).max(1)
     }
     
-    /// Aggressively optimize messages to minimize token usage while preserving tool context
-    /// Keeps: system messages + most recent tool result (if any) + current user message
-    /// This is minimal but ensures tools work and tokens stay low
+    /// Optimize messages to minimize token usage while preserving tool context.
+    /// Keeps: system messages + the last user message + any assistant/tool pairs after it.
+    /// This ensures the model sees the complete tool call→result chain and won't repeat tool calls.
     pub fn optimize_messages(messages: Vec<ChatMessage>, _max_messages: usize) -> Vec<ChatMessage> {
         if messages.is_empty() {
             return messages;
@@ -45,23 +59,18 @@ impl ChatMessage {
             return system_msgs;
         }
         
-        // Keep only the most recent: tool result (if exists) + current user message
-        // This is the minimal context needed to avoid infinite loops while staying under token limits
-        let mut recent_messages = Vec::new();
+        // Find the index of the last user message
+        let last_user_idx = other_msgs.iter().rposition(|m| m.role == "user");
         
-        // Find the last tool result (indicating a tool was just executed)
-        let last_tool_result = other_msgs.iter().rev().find(|m| m.role == "tool");
-        if let Some(tool_msg) = last_tool_result {
-            recent_messages.push(tool_msg.clone());
-        }
+        // Keep: last user message + everything after it (assistant tool_calls + tool results)
+        // This preserves the full tool-call/result chain so the model knows what was already done.
+        let recent_messages: Vec<ChatMessage> = if let Some(idx) = last_user_idx {
+            other_msgs.into_iter().skip(idx).collect()
+        } else {
+            other_msgs
+        };
         
-        // Find the last user message (current input)
-        let last_user = other_msgs.iter().rev().find(|m| m.role == "user");
-        if let Some(user_msg) = last_user {
-            recent_messages.push(user_msg.clone());
-        }
-        
-        // Build final message list: system + minimal context
+        // Build final message list: system + recent context
         system_msgs.extend(recent_messages);
         system_msgs
     }

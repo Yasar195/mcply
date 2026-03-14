@@ -30,11 +30,15 @@ impl DynamicToolDef {
             }
         }
 
-        let schema = json!({
-            "type": "object",
-            "properties": properties,
-            "required": required
-        });
+        let mut schema_map = serde_json::Map::new();
+        schema_map.insert("type".to_string(), json!("object"));
+        schema_map.insert("properties".to_string(), json!(properties));
+        
+        if !required.is_empty() {
+            schema_map.insert("required".to_string(), json!(required));
+        }
+
+        let schema = serde_json::Value::Object(schema_map);
 
         Tool {
             name: self.name.clone().into(),
@@ -62,5 +66,5 @@ pub struct ToolParam {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActionType {
-    http
+    Http
 }
