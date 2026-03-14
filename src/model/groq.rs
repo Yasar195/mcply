@@ -34,7 +34,7 @@ impl Model for GroqModel {
         })
     }
 
-    fn chat(&self, messages: Vec<ChatMessage>, model: String, tools: Option<serde_json::Value>) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ModelError>> + Send + '_>> {
+    fn chat(&self, messages: Vec<ChatMessage>, model: String, tools: Option<serde_json::Value>, tool_choice: Option<String>) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ModelError>> + Send + '_>> {
         Box::pin(async move {
             let mut payload = serde_json::json!({
                 "model": model,
@@ -47,7 +47,12 @@ impl Model for GroqModel {
                         payload.as_object_mut().unwrap().insert("tools".to_string(), t);
                         // Let Groq API use default tool_choice ("auto") natively rather than explicitly injecting it,
                         // which some models (like llama-3 on Groq) can misinterpret when parameters are empty.
-                    }
+                        let choice = tool_choice.unwrap_or_else(|| "auto".to_string());
+                            payload.as_object_mut().unwrap().insert(
+                                "tool_choice".to_string(), 
+                                serde_json::Value::String(choice)
+                            );
+                        }
                 }
             }
 

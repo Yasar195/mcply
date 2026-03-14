@@ -247,6 +247,7 @@ CRITICAL TOOL INSTRUCTIONS:
                     let mut retry_without_tools = false;
                     let mut last_tool_calls: Vec<String> = Vec::new();
                     let mut tool_call_repeat_count = 0;
+                    let mut just_ran_tools = false;
                     loop {
                         // Build messages to send: system message + optimized history
                         // When retrying without tools, send ONLY the current user message to avoid format errors
@@ -258,6 +259,14 @@ CRITICAL TOOL INSTRUCTIONS:
                                 tool_call_id: None,
                                 tool_calls: None,
                             }]
+                        } else if just_ran_tools {
+                            // Skip optimization — tool results MUST survive intact for synthesis
+                            let mut msgs = Vec::new();
+                            if let Some(ref sys_msg) = system_message {
+                                msgs.push(sys_msg.clone());
+                            }
+                            msgs.extend(history.clone());
+                            msgs
                         } else {
                             // Normal mode: system + optimized history
                             // First build with system + full history
@@ -282,11 +291,15 @@ CRITICAL TOOL INSTRUCTIONS:
                         let result: Result<Value, _> = match model_config.model_type.as_str() {
                             "Groq" => {
                                 let m = GroqModel::new("https://api.groq.com/openai/v1".to_string(), model_config.api_key.clone().unwrap_or_default());
-                                m.chat(messages_to_send, active_model_name.clone(), mcp_tools.clone()).await
+                                let tool_choice = if just_ran_tools { Some("none".to_string()) } else { None };
+                                just_ran_tools = false;
+                                m.chat(messages_to_send, active_model_name.clone(), mcp_tools.clone(), tool_choice).await
                             }
                             "Ollama" | _ => {
                                 let m = OllamaModel::new();
-                                m.chat(messages_to_send, active_model_name.clone(), mcp_tools.clone()).await
+                                let tool_choice = if just_ran_tools { Some("none".to_string()) } else { None };
+                                just_ran_tools = false;
+                                m.chat(messages_to_send, active_model_name.clone(), mcp_tools.clone(), tool_choice).await
                             }
                         };
 
@@ -321,12 +334,10 @@ CRITICAL TOOL INSTRUCTIONS:
                                                     Some(format!("{}:{}", name, args))
                                                 })
                                                 .collect();
-
-                                            eprintln!("{:?}", current_tool_calls);
                                             
                                             if current_tool_calls == last_tool_calls {
                                                 tool_call_repeat_count += 1;
-                                                if tool_call_repeat_count >= 1 {
+                                                if tool_call_repeat_count >= 2 {
                                                     // Same tool+args called again - break to prevent infinite loop
                                                     let _ = ui_tx.send(("System".to_string(), "⚠️  Stopped: Tool calling loop detected. Model is repeating same tool calls.".to_string()));
                                                     break;
@@ -375,6 +386,7 @@ CRITICAL TOOL INSTRUCTIONS:
                                                 }
                                             }
                                             // Loop back around to let the model generate the final response
+                                            just_ran_tools = true;
                                             continue;
                                         } else {
                                             // Final Text Response
@@ -409,7 +421,7 @@ CRITICAL TOOL INSTRUCTIONS:
                                         
                                         if current_tool_calls == last_tool_calls {
                                             tool_call_repeat_count += 1;
-                                            if tool_call_repeat_count >= 1 {
+                                            if tool_call_repeat_count >= 2 {
                                                 // Same tool+args called again - break to prevent infinite loop
                                                 let _ = ui_tx.send(("System".to_string(), "⚠️  Stopped: Tool calling loop detected. Model is repeating same tool calls.".to_string()));
                                                 break;
@@ -448,6 +460,7 @@ CRITICAL TOOL INSTRUCTIONS:
                                             }
                                         }
                                         // Iterate
+                                        just_ran_tools = true;
                                         continue;
                                     } else {
                                         let _ = ui_tx.send(("AI".to_string(), content_str));
