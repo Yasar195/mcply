@@ -29,18 +29,20 @@ impl Model for OllamaModel {
     }
 
 
-    fn chat(&self, messages: Vec<ChatMessage>, model: String, tools: Option<serde_json::Value>) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ModelError>> + Send + '_>> {
-       Box::pin(async move {
+    fn chat(&self, messages: Vec<ChatMessage>, model: String, tools: Option<serde_json::Value>, tool_choice: Option<String>)
+    -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ModelError>> + Send + '_>> {
+        Box::pin(async move {
             let mut payload = serde_json::json!({
                 "model": model,
                 "messages": messages,
                 "stream": false
             });
-            
-            // Only add tools if they exist and are not empty
-            if let Some(t) = tools {
-                if let Some(arr) = t.as_array() {
-                    if !arr.is_empty() {
+
+            let suppress_tools = tool_choice.as_deref() == Some("none");
+
+            if !suppress_tools {
+                if let Some(t) = tools {
+                    if t.as_array().map_or(false, |arr| !arr.is_empty()) {
                         payload.as_object_mut().unwrap().insert("tools".to_string(), t);
                     }
                 }
@@ -54,13 +56,9 @@ impl Model for OllamaModel {
                 .await?;
 
             let body: serde_json::Value = response.json().await?;
-            
-            // Check if the API returned an error in the response body
             if let Some(error_msg) = body.get("error").and_then(|e| e.as_str()) {
-                // Create a custom error that the caller can catch
                 return Err(ModelError::CustomError(error_msg.to_string()));
             }
-            
             Ok(body)
         })
     }

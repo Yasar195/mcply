@@ -29,7 +29,7 @@ where
 
 pub trait Model {
     fn connect(&self, api_key: Option<String>) -> Pin<Box<dyn Future<Output = Result<(), ModelError>> + Send + '_>>;
-    fn chat(&self, messages: Vec<ChatMessage>, model: String, tools: Option<serde_json::Value>) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ModelError>> + Send + '_>>;
+    fn chat(&self, messages: Vec<ChatMessage>, model: String, tools: Option<serde_json::Value>, tool_choice: Option<String>) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ModelError>> + Send + '_>>;
     fn list_models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>, ModelError>> + Send + '_>> {
         Box::pin(async move {
             Ok(vec!["default".to_string()])
@@ -50,27 +50,22 @@ impl ChatMessage {
         if messages.is_empty() {
             return messages;
         }
-        
-        // Separate system messages from others
-        let (mut system_msgs, other_msgs): (Vec<_>, Vec<_>) = 
+
+        let (mut system_msgs, other_msgs): (Vec<_>, Vec<_>) =
             messages.into_iter().partition(|m| m.role == "system");
-        
+
         if other_msgs.is_empty() {
             return system_msgs;
         }
-        
-        // Find the index of the last user message
+
         let last_user_idx = other_msgs.iter().rposition(|m| m.role == "user");
-        
-        // Keep: last user message + everything after it (assistant tool_calls + tool results)
-        // This preserves the full tool-call/result chain so the model knows what was already done.
+
         let recent_messages: Vec<ChatMessage> = if let Some(idx) = last_user_idx {
             other_msgs.into_iter().skip(idx).collect()
         } else {
             other_msgs
         };
-        
-        // Build final message list: system + recent context
+
         system_msgs.extend(recent_messages);
         system_msgs
     }
